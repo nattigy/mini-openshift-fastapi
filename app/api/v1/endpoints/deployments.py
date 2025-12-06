@@ -34,6 +34,8 @@ async def create_deployment(
             image=deployment_in.image,
             replicas=deployment_in.replicas,
             port=deployment_in.port,
+            image_pull_policy=deployment_in.image_pull_policy,
+            service_type=deployment_in.service_type,
             env_vars=deployment_in.env_vars,
             labels=deployment_in.labels
         )
@@ -49,6 +51,18 @@ async def create_deployment(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to create deployment: {e.reason}"
+        )
+    except Exception as e:
+        # Handle connection errors and other K8s issues
+        error_msg = str(e)
+        if "connection" in error_msg.lower() or "refused" in error_msg.lower():
+            raise HTTPException(
+                status_code=503,
+                detail="Kubernetes cluster is not available. Please ensure your Kubernetes cluster (Minikube/Kind) is running."
+            )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create deployment: {error_msg}"
         )
 
 @router.get("/", response_model=schemas.DeploymentList)

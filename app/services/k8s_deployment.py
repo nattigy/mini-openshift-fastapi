@@ -1,6 +1,7 @@
 from kubernetes_asyncio.client import (
     V1Deployment, V1DeploymentSpec, V1PodTemplateSpec, V1ObjectMeta,
     V1PodSpec, V1Container, V1ContainerPort, V1EnvVar, V1LabelSelector,
+    V1Service, V1ServiceSpec, V1ServicePort,
     ApiException
 )
 from typing import Optional, List, Dict
@@ -19,29 +20,17 @@ class DeploymentService:
         image: str,
         replicas: int = 1,
         port: Optional[int] = None,
+        image_pull_policy: str = "IfNotPresent",
+        service_type: str = "ClusterIP",
         env_vars: Optional[Dict[str, str]] = None,
         labels: Optional[Dict[str, str]] = None
     ) -> V1Deployment:
         """
-        Create a Kubernetes deployment
-        
-        Args:
-            namespace: Namespace to create deployment in
-            name: Deployment name
-            image: Container image (e.g., nginx:latest)
-            replicas: Number of replicas
-            port: Container port to expose
-            env_vars: Environment variables as dict
-            labels: Labels for the deployment
-        
-        Returns:
-            Created V1Deployment object
-        
-        Raises:
-            ApiException: If K8s API call fails
+        Create a Kubernetes deployment and optional service
         """
         try:
             apps_v1 = k8s_client.get_apps_v1_api()
+            core_v1 = k8s_client.get_core_v1_api()
             
             # Default labels
             if labels is None:
@@ -64,6 +53,7 @@ class DeploymentService:
             container = V1Container(
                 name=name,
                 image=image,
+                image_pull_policy=image_pull_policy,
                 ports=container_ports if container_ports else None,
                 env=env if env else None
             )
@@ -99,6 +89,35 @@ class DeploymentService:
                 body=deployment
             )
             logger.info(f"Created deployment {name} in namespace {namespace}")
+            
+            # Create Service if port is specified
+            if port:
+                try:
+                    service_spec = V1ServiceSpec(
+                        selector={"app": name},
+                        ports=[V1ServicePort(port=port, target_port=port)],
+                        type=service_type
+                    )
+                    
+                    service = V1Service(
+                        metadata=V1ObjectMeta(
+                            name=name,
+                            namespace=namespace,
+                            labels=labels
+                        ),
+                        spec=service_spec
+                    )
+                    
+                    await core_v1.create_namespaced_service(
+                        namespace=namespace,
+                        body=service
+                    )
+                    logger.info(f"Created service {name} in namespace {namespace}")
+                except ApiException as e:
+                    if e.status != 409: # Ignore if already exists
+                        logger.error(f"Failed to create service {name}: {e}")
+                        # We don't raise here to allow deployment creation to succeed even if service fails
+            
             return result
             
         except ApiException as e:

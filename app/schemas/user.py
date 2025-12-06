@@ -20,6 +20,11 @@ class UserCreate(UserBase):
 class UserUpdate(UserBase):
     password: Optional[str] = None
 
+class UserUpdateMe(BaseModel):
+    username: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None
+
 class UserInDBBase(UserBase):
     id: Optional[UUID] = None
 

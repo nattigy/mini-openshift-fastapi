@@ -1,4 +1,4 @@
-from .user import User, UserCreate, UserUpdate, PasswordChange
+from .user import User, UserCreate, UserUpdate, UserUpdateMe, PasswordChange
 from .project import Project, ProjectCreate, ProjectUpdate
 from .token import Token, TokenPayload
 from .deployment import Deployment, DeploymentCreate, DeploymentUpdate, DeploymentScale, DeploymentList

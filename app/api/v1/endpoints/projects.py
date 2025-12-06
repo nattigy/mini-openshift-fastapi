@@ -1,11 +1,14 @@
 from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+import logging
 
 from app import crud, schemas
 from app.api import deps
 from app.services import namespace_service
 from app.models.core import User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -44,13 +47,20 @@ async def create_project(
             detail="The project with this name already exists.",
         )
     
-    # Create K8s namespace first
+    # Create K8s namespace
     try:
-        namespace_service.create_namespace(project_in.name)
+        await namespace_service.create_namespace(project_in.name)
+        logger.info(f"Created Kubernetes namespace for project: {project_in.name}")
     except Exception as e:
+        error_msg = str(e)
+        if "connection" in error_msg.lower() or "refused" in error_msg.lower():
+            raise HTTPException(
+                status_code=503,
+                detail="Kubernetes cluster is not available. Please ensure your Kubernetes cluster (Minikube/Docker Desktop/Kind) is running."
+            )
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to create Kubernetes namespace: {str(e)}"
+            detail=f"Failed to create Kubernetes namespace: {error_msg}"
         )
     
     # Create project in DB
@@ -62,7 +72,7 @@ async def create_project(
     except Exception as e:
         # Rollback: delete namespace if DB creation fails
         try:
-            namespace_service.delete_namespace(project_in.name)
+            await namespace_service.delete_namespace(project_in.name)
         except:
             pass
         raise HTTPException(
@@ -134,7 +144,7 @@ async def delete_project(
     
     # Delete K8s namespace
     try:
-        namespace_service.delete_namespace(project.name)
+        await namespace_service.delete_namespace(project.name)
     except Exception as e:
         # Log error but continue to delete from DB
         print(f"Failed to delete namespace {project.name}: {e}")

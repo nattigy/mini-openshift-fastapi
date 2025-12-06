@@ -8,6 +8,8 @@ class DeploymentCreate(BaseModel):
     image: str = Field(..., min_length=1, description="Container image (e.g., nginx:latest)")
     replicas: int = Field(default=1, ge=1, le=100, description="Number of replicas")
     port: Optional[int] = Field(None, ge=1, le=65535, description="Container port to expose")
+    image_pull_policy: str = Field("IfNotPresent", description="Image pull policy (Always, IfNotPresent, Never)")
+    service_type: str = Field("ClusterIP", description="Service type (ClusterIP, NodePort, LoadBalancer)")
     env_vars: Optional[Dict[str, str]] = Field(None, description="Environment variables")
     labels: Optional[Dict[str, str]] = Field(None, description="Additional labels")
 

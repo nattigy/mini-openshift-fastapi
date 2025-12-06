@@ -58,7 +58,7 @@ class APITester:
             "username": self.test_user_username,
             "password": self.test_user_password
         }
-        response = await self.client.post(f"{BASE_URL}/users/", json=signup_data)
+        response = await self.client.post(f"{BASE_URL}/users/open", json=signup_data)
         
         if response.status_code == 200:
             print("   ✓ User registration successful")
@@ -86,6 +86,17 @@ class APITester:
         else:
             print(f"   ✗ Failed: {response.text}")
             raise Exception("Login failed")
+
+        # Test 3: Logout
+        print("\n[1.3] Testing User Logout...")
+        headers = {"Authorization": f"Bearer {self.token}"}
+        response = await self.client.post(f"{BASE_URL}/logout", headers=headers)
+        
+        if response.status_code == 200:
+            print("   ✓ Logout successful")
+        else:
+            print(f"   ✗ Failed: {response.text}")
+            raise Exception("Logout failed")
     
     async def test_user_management(self):
         """Test user management endpoints"""
@@ -131,8 +142,10 @@ class APITester:
         
         # Test 5: Create Project
         print("\n[3.1] Testing Create Project...")
+        timestamp = int(time.time())
+        project_name = f"test-api-project-{timestamp}"
         project_data = {
-            "name": "test-api-project",
+            "name": project_name,
             "description": "Comprehensive API test project"
         }
         response = await self.client.post(

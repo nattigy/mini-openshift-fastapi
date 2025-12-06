@@ -5,6 +5,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import crud, schemas
+from app.models import core as models
 from app.api import deps
 from app.core import security
 from app.core.config import settings
@@ -33,3 +34,12 @@ async def login_access_token(
         ),
         "token_type": "bearer",
     }
+
+@router.post("/logout")
+async def logout(
+    current_user: models.User = Depends(deps.get_current_active_user),
+) -> Any:
+    """
+    Logout current user.
+    """
+    return {"message": "Successfully logged out"}

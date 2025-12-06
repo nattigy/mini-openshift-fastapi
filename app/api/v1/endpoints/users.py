@@ -29,6 +29,35 @@ async def read_users(
         users = await crud.user.get_multi(db, skip=skip, limit=limit)
     return users
 
+@router.post("/open", response_model=schemas.User)
+async def create_user_open(
+    *,
+    db: AsyncSession = Depends(deps.get_db),
+    user_in: schemas.UserCreate,
+) -> Any:
+    """
+    Create new user without login.
+    """
+    user = await crud.user.get_by_email(db, email=user_in.email)
+    if user:
+        raise HTTPException(
+            status_code=400,
+            detail="The user with this email already exists in the system.",
+        )
+    
+    user = await crud.user.get_by_username(db, username=user_in.username)
+    if user:
+        raise HTTPException(
+            status_code=400,
+            detail="The user with this username already exists in the system.",
+        )
+        
+    # Force role to developer for open registration
+    user_in.role = "developer" # UserRole.DEVELOPER might need import
+    
+    user = await crud.user.create(db, obj_in=user_in)
+    return user
+
 @router.post("/", response_model=schemas.User)
 async def create_user(
     *,
@@ -43,8 +72,16 @@ async def create_user(
     if user:
         raise HTTPException(
             status_code=400,
+            detail="The user with this email already exists in the system.",
+        )
+    
+    user = await crud.user.get_by_username(db, username=user_in.username)
+    if user:
+        raise HTTPException(
+            status_code=400,
             detail="The user with this username already exists in the system.",
         )
+        
     user = await crud.user.create(db, obj_in=user_in)
     return user
 
@@ -52,20 +89,30 @@ async def create_user(
 async def update_user_me(
     *,
     db: AsyncSession = Depends(deps.get_db),
-    password: str = Body(None),
-    full_name: str = Body(None),
-    email: EmailStr = Body(None),
+    user_in: schemas.UserUpdateMe,
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
     """
     Update own user.
     """
-    current_user_data = jsonable_encoder(current_user)
-    user_in = schemas.UserUpdate(**current_user_data)
-    if password is not None:
-        user_in.password = password
-    if email is not None:
-        user_in.email = email
+    # Check if username is being updated and if it's already taken
+    if user_in.username and user_in.username != current_user.username:
+        existing_user = await crud.user.get_by_username(db, username=user_in.username)
+        if existing_user:
+            raise HTTPException(
+                status_code=400,
+                detail="The user with this username already exists.",
+            )
+            
+    # Check if email is being updated and if it's already taken
+    if user_in.email and user_in.email != current_user.email:
+        existing_user = await crud.user.get_by_email(db, email=user_in.email)
+        if existing_user:
+            raise HTTPException(
+                status_code=400,
+                detail="The user with this email already exists.",
+            )
+
     user = await crud.user.update(db, db_obj=current_user, obj_in=user_in)
     return user
 
