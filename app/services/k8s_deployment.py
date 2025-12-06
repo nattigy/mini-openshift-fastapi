@@ -7,11 +7,39 @@ from kubernetes_asyncio.client import (
 from typing import Optional, List, Dict
 import logging
 from app.services.k8s_client import k8s_client
+from app.services.k8s_ingress import ingress_service
 
 logger = logging.getLogger(__name__)
 
 class DeploymentService:
     """Service for managing Kubernetes deployments"""
+    
+    def _build_domain(
+        self, 
+        project_domain: str, 
+        environment_prefix: str, 
+        subdomain: str
+    ) -> str:
+        """
+        Build full domain from components.
+        
+        Examples:
+            _build_domain("clienta.com", "", "admin") → "admin.clienta.com"
+            _build_domain("clienta.com", "uat", "admin") → "admin.uat.clienta.com"
+            _build_domain("clienta.com", "", "") → "clienta.com"
+            _build_domain("clienta.com", "uat", "") → "uat.clienta.com"
+        """
+        parts = []
+        
+        if subdomain:
+            parts.append(subdomain)
+        
+        if environment_prefix:
+            parts.append(environment_prefix)
+        
+        parts.append(project_domain)
+        
+        return ".".join(parts)
     
     async def create_deployment(
         self,
@@ -19,15 +47,23 @@ class DeploymentService:
         name: str,
         image: str,
         replicas: int = 1,
-        port: Optional[int] = None,
+        # container_port arg is deprecated/ignored, we hardcode to 3000
+        container_port: int = 3000, 
         image_pull_policy: str = "IfNotPresent",
-        service_type: str = "ClusterIP",
+        project_domain: Optional[str] = None,
+        environment_prefix: str = "",
+        subdomain: str = "",
         env_vars: Optional[Dict[str, str]] = None,
         labels: Optional[Dict[str, str]] = None
     ) -> V1Deployment:
         """
-        Create a Kubernetes deployment and optional service
+        Create a Kubernetes deployment with ClusterIP service and Ingress.
+        Service Port: 80 (HTTP) -> Container Port: 3000
         """
+        # HARDCODED PORTS per user request
+        CONTAINER_PORT = 3000
+        SERVICE_PORT = 80
+
         try:
             apps_v1 = k8s_client.get_apps_v1_api()
             core_v1 = k8s_client.get_core_v1_api()
@@ -41,9 +77,7 @@ class DeploymentService:
             })
             
             # Build container spec
-            container_ports = []
-            if port:
-                container_ports.append(V1ContainerPort(container_port=port))
+            container_ports = [V1ContainerPort(container_port=CONTAINER_PORT)]
             
             # Build environment variables
             env = []
@@ -54,7 +88,7 @@ class DeploymentService:
                 name=name,
                 image=image,
                 image_pull_policy=image_pull_policy,
-                ports=container_ports if container_ports else None,
+                ports=container_ports,
                 env=env if env else None
             )
             
@@ -83,40 +117,56 @@ class DeploymentService:
                 spec=deployment_spec
             )
             
-            # Create deployment
+            # Step 1: Create deployment
             result = await apps_v1.create_namespaced_deployment(
                 namespace=namespace,
                 body=deployment
             )
             logger.info(f"Created deployment {name} in namespace {namespace}")
             
-            # Create Service if port is specified
-            if port:
-                try:
-                    service_spec = V1ServiceSpec(
-                        selector={"app": name},
-                        ports=[V1ServicePort(port=port, target_port=port)],
-                        type=service_type
-                    )
-                    
-                    service = V1Service(
-                        metadata=V1ObjectMeta(
-                            name=name,
-                            namespace=namespace,
-                            labels=labels
-                        ),
-                        spec=service_spec
-                    )
-                    
-                    await core_v1.create_namespaced_service(
+            # Step 2: Create ClusterIP Service (always)
+            try:
+                service_spec = V1ServiceSpec(
+                    selector={"app": name},
+                    ports=[V1ServicePort(port=SERVICE_PORT, target_port=CONTAINER_PORT)],
+                    type="ClusterIP"
+                )
+                
+                service = V1Service(
+                    metadata=V1ObjectMeta(
+                        name=name,
                         namespace=namespace,
-                        body=service
+                        labels=labels
+                    ),
+                    spec=service_spec
+                )
+                
+                await core_v1.create_namespaced_service(
+                    namespace=namespace,
+                    body=service
+                )
+                logger.info(f"Created ClusterIP service {name} in namespace {namespace} (80->3000)")
+            except ApiException as e:
+                if e.status != 409:  # Ignore if already exists
+                    logger.error(f"Failed to create service {name}: {e}")
+                    raise
+            
+            # Step 3: Create Ingress if domain is provided
+            if project_domain:
+                try:
+                    full_domain = self._build_domain(project_domain, environment_prefix, subdomain)
+                    
+                    await ingress_service.create_ingress(
+                        namespace=namespace,
+                        name=name,
+                        host=full_domain,
+                        service_name=name,
+                        service_port=SERVICE_PORT
                     )
-                    logger.info(f"Created service {name} in namespace {namespace}")
-                except ApiException as e:
-                    if e.status != 409: # Ignore if already exists
-                        logger.error(f"Failed to create service {name}: {e}")
-                        # We don't raise here to allow deployment creation to succeed even if service fails
+                    logger.info(f"Created Ingress for {full_domain}")
+                except Exception as e:
+                    logger.error(f"Failed to create Ingress: {e}")
+                    # Don't raise - deployment and service are created successfully
             
             return result
             
@@ -170,7 +220,7 @@ class DeploymentService:
     
     async def delete_deployment(self, namespace: str, name: str) -> bool:
         """
-        Delete a Kubernetes deployment
+        Delete a Kubernetes deployment along with its Service and Ingress.
         
         Args:
             namespace: Namespace of the deployment
@@ -182,21 +232,48 @@ class DeploymentService:
         Raises:
             ApiException: If K8s API call fails
         """
+        deployment_deleted = False
+        
         try:
+            # Step 1: Delete Deployment
             apps_v1 = k8s_client.get_apps_v1_api()
             await apps_v1.delete_namespaced_deployment(
                 name=name,
                 namespace=namespace
             )
             logger.info(f"Deleted deployment {name} from namespace {namespace}")
-            return True
+            deployment_deleted = True
             
         except ApiException as e:
             if e.status == 404:
                 logger.warning(f"Deployment {name} not found in {namespace}")
-                return False
-            logger.error(f"Failed to delete deployment {name}: {e}")
-            raise
+            else:
+                logger.error(f"Failed to delete deployment {name}: {e}")
+                raise
+        
+        # Step 2: Delete Service
+        try:
+            core_v1 = k8s_client.get_core_v1_api()
+            await core_v1.delete_namespaced_service(
+                name=name,
+                namespace=namespace
+            )
+            logger.info(f"Deleted service {name} from namespace {namespace}")
+        except ApiException as e:
+            if e.status != 404:
+                logger.warning(f"Failed to delete service {name}: {e}")
+        
+        # Step 3: Delete Ingress
+        try:
+            await ingress_service.delete_ingress(
+                namespace=namespace,
+                name=name
+            )
+            logger.info(f"Deleted ingress for {name}")
+        except Exception as e:
+            logger.warning(f"Failed to delete ingress for {name}: {e}")
+        
+        return deployment_deleted
     
     async def scale_deployment(
         self,

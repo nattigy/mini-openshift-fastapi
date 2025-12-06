@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, ConfigDict
 from uuid import UUID
 from datetime import datetime
 import re
@@ -8,6 +8,7 @@ import re
 class ProjectBase(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    domain: Optional[str] = None  # NEW: Base domain for the project
 
 # Properties to receive via API on creation
 class ProjectCreate(ProjectBase):
@@ -45,8 +46,7 @@ class ProjectInDBBase(ProjectBase):
     owner_id: Optional[UUID] = None
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # Additional properties to return via API
 class Project(ProjectInDBBase):

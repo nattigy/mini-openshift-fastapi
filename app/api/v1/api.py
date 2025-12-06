@@ -1,10 +1,11 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import login, users, projects, deployments, pods
+from app.api.v1.endpoints import login, users, projects, deployments, pods, environments
 
 api_router = APIRouter()
 api_router.include_router(login.router, tags=["login"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
+api_router.include_router(environments.router, prefix="/environments", tags=["environments"])
 api_router.include_router(
     deployments.router,
     prefix="/projects/{project_id}/deployments",
